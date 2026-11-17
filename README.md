@@ -62,3 +62,7 @@ estourar a memória. O app também leva o ícone `icon.png` (38x38).
   dentro do app no Connectivity Kit.
 - **Memória cheia:** use `--zoom-max 2`, `--paginas` ou divida o documento em
   vários apps com `--nome`.
+
+## Licença
+
+[MIT](LICENSE)
