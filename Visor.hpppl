@@ -1,0 +1,324 @@
+// =====================================================
+//  Visor de imagens e PDF para HP Prime
+//  As paginas sao arquivos PNG guardados no proprio app,
+//  divididos em blocos de 480x360 para economizar memoria:
+//    p<pagina>_<nivel>_<coluna>_<linha>.png
+//  nivel 1 = menor zoom; cada nivel seguinte = mais zoom.
+//
+//  Teclas:
+//    Setas ........ mover pela pagina
+//    +  / - ....... zoom mais / menos
+//    3  / 9 ....... proxima / pagina anterior
+//    Seta p/ baixo no fim da pagina -> proxima pagina
+//    Seta p/ cima no topo da pagina -> pagina anterior
+//    Enter ........ mostra/oculta a barra de status
+//    Esc .......... sair
+//  Toque: arraste o dedo para mover.
+// =====================================================
+
+// (HPPPL aceita no maximo 8 variaveis por LOCAL)
+LOCAL fs, np, pg, lv, ml;
+LOCAL cx, cy, gw, gh;
+LOCAL noTopo, noFim, temH, barra;
+LOCAL nC, nR, sk, sa, tick, falhou, msg;
+
+NumStr(n)
+BEGIN
+  LOCAL s:="", d;
+  n:=IP(n);
+  IF n<=0 THEN RETURN "0"; END;
+  WHILE n>0 DO
+    d:=n MOD 10;
+    s:=CHAR(48+d)+s;
+    n:=IP(n/10);
+  END;
+  RETURN s;
+END;
+
+Tn(p,k,c,r)
+BEGIN
+  RETURN "p"+NumStr(p)+"_"+NumStr(k)+"_"+NumStr(c)+"_"+NumStr(r)+".png";
+END;
+
+Existe(nm)
+BEGIN
+  RETURN POS(fs,nm)>0;
+END;
+
+MaxNivel(p)
+BEGIN
+  LOCAL k:=1;
+  WHILE Existe(Tn(p,k+1,1,1)) DO k:=k+1; END;
+  RETURN k;
+END;
+
+// ---- 4 "gavetas" de blocos: G3..G6 ----
+SlotLivre(s)
+BEGIN
+  CASE
+    IF s==1 THEN DIMGROB_P(G3,1,1,0); END;
+    IF s==2 THEN DIMGROB_P(G4,1,1,0); END;
+    IF s==3 THEN DIMGROB_P(G5,1,1,0); END;
+    DEFAULT DIMGROB_P(G6,1,1,0);
+  END;
+END;
+
+SlotCarrega(s,nm)
+BEGIN
+  SlotLivre(s);
+  CASE
+    IF s==1 THEN G3:=AFiles(nm); END;
+    IF s==2 THEN G4:=AFiles(nm); END;
+    IF s==3 THEN G5:=AFiles(nm); END;
+    DEFAULT G6:=AFiles(nm);
+  END;
+END;
+
+SlotW(s)
+BEGIN
+  CASE
+    IF s==1 THEN RETURN GROBW_P(G3); END;
+    IF s==2 THEN RETURN GROBW_P(G4); END;
+    IF s==3 THEN RETURN GROBW_P(G5); END;
+    DEFAULT RETURN GROBW_P(G6);
+  END;
+END;
+
+SlotH(s)
+BEGIN
+  CASE
+    IF s==1 THEN RETURN GROBH_P(G3); END;
+    IF s==2 THEN RETURN GROBH_P(G4); END;
+    IF s==3 THEN RETURN GROBH_P(G5); END;
+    DEFAULT RETURN GROBH_P(G6);
+  END;
+END;
+
+SlotBlit(s,a1,b1,a2,b2,u1,v1,u2,v2)
+BEGIN
+  CASE
+    IF s==1 THEN BLIT_P(G2,a1,b1,a2,b2,G3,u1,v1,u2,v2); END;
+    IF s==2 THEN BLIT_P(G2,a1,b1,a2,b2,G4,u1,v1,u2,v2); END;
+    IF s==3 THEN BLIT_P(G2,a1,b1,a2,b2,G5,u1,v1,u2,v2); END;
+    DEFAULT BLIT_P(G2,a1,b1,a2,b2,G6,u1,v1,u2,v2);
+  END;
+END;
+
+// Garante o bloco (c,r) da pagina/nivel atual numa gaveta.
+// Retorna o numero da gaveta, ou 0 se faltou memoria.
+Bloco(c,r)
+BEGIN
+  LOCAL nm, s, j, v;
+  nm:=Tn(pg,lv,c,r);
+  tick:=tick+1;
+  s:=POS(sk,nm);
+  IF s>0 THEN sa(s):=tick; RETURN s; END;
+  v:=1;
+  FOR j FROM 2 TO 4 DO
+    IF sa(j)<sa(v) THEN v:=j; END;
+  END;
+  sk(v):="";
+  IFERR SlotCarrega(v,nm); THEN
+    SlotLivre(v);
+    falhou:=1;
+    RETURN 0;
+  END;
+  sk(v):=nm; sa(v):=tick;
+  RETURN v;
+END;
+
+// Descobre o tamanho do nivel atual. Retorna 0 se faltou memoria.
+Carregar()
+BEGIN
+  LOCAL s;
+  ml:=MaxNivel(pg);
+  lv:=MAX(1,MIN(lv,ml));
+  nC:=1; WHILE Existe(Tn(pg,lv,nC+1,1)) DO nC:=nC+1; END;
+  nR:=1; WHILE Existe(Tn(pg,lv,1,nR+1)) DO nR:=nR+1; END;
+  s:=Bloco(nC,1);
+  IF s==0 THEN RETURN 0; END;
+  gw:=(nC-1)*480+SlotW(s);
+  s:=Bloco(1,nR);
+  IF s==0 THEN RETURN 0; END;
+  gh:=(nR-1)*360+SlotH(s);
+  RETURN 1;
+END;
+
+// Muda o nivel de zoom; se faltar memoria volta ao anterior.
+Zoom(novo)
+BEGIN
+  LOCAL ant:=lv;
+  IF novo<1 OR novo>ml THEN RETURN 0; END;
+  lv:=novo;
+  falhou:=0;
+  IF NOT Carregar() THEN
+    lv:=ant; falhou:=0; Carregar();
+    msg:="Memoria insuficiente p/ este zoom";
+  END;
+  barra:=1;
+END;
+
+// Troca de pagina mantendo o nivel de zoom.
+// topo=1 -> abre no topo; topo=0 -> abre no fim
+IrPagina(p,topo)
+BEGIN
+  IF p<1 OR p>np THEN RETURN 0; END;
+  pg:=p;
+  falhou:=0;
+  WHILE (NOT Carregar()) AND (lv>1) DO
+    lv:=lv-1; falhou:=0;
+    msg:="Memoria insuficiente p/ este zoom";
+  END;
+  cx:=0.5;
+  IF topo THEN cy:=0; ELSE cy:=1; END;
+  barra:=1;
+  RETURN 1;
+END;
+
+Desenhar()
+BEGIN
+  LOCAL sx,sy,dx,dy,cw,ch,t;
+  LOCAL c1,c2,r1,r2,c,r,s,ox;
+  LOCAL oy,x1,x2,y1,y2;
+  RECT_P(G2,0,0,319,239,RGB(70,70,70));
+
+  // eixo X
+  IF gw<=320 THEN
+    sx:=0; cw:=gw; dx:=IP((320-gw)/2); cx:=0.5; temH:=0;
+  ELSE
+    cw:=320; dx:=0; temH:=1;
+    sx:=IP(cx*gw-160);
+    sx:=MAX(0,MIN(gw-320,sx));
+    cx:=(sx+160)/gw;
+  END;
+
+  // eixo Y
+  IF gh<=240 THEN
+    sy:=0; ch:=gh; dy:=IP((240-gh)/2); cy:=0.5;
+    noTopo:=1; noFim:=1;
+  ELSE
+    ch:=240; dy:=0;
+    sy:=IP(cy*gh-120);
+    sy:=MAX(0,MIN(gh-240,sy));
+    cy:=(sy+120)/gh;
+    noTopo:=(sy<=0);
+    noFim:=(sy>=gh-240);
+  END;
+
+  // desenha os blocos visiveis (no maximo 2x2)
+  c1:=IP(sx/480)+1; c2:=IP((sx+cw-1)/480)+1;
+  r1:=IP(sy/360)+1; r2:=IP((sy+ch-1)/360)+1;
+  FOR r FROM r1 TO r2 DO
+    FOR c FROM c1 TO c2 DO
+      s:=Bloco(c,r);
+      IF s>0 THEN
+        ox:=(c-1)*480; oy:=(r-1)*360;
+        x1:=MAX(sx,ox); x2:=MIN(sx+cw,ox+480);
+        y1:=MAX(sy,oy); y2:=MIN(sy+ch,oy+360);
+        SlotBlit(s,dx+x1-sx,dy+y1-sy,dx+x2-sx,dy+y2-sy,x1-ox,y1-oy,x2-ox,y2-oy);
+      END;
+    END;
+  END;
+
+  IF msg<>"" THEN barra:=1; END;
+  IF barra THEN
+    RECT_P(G2,0,226,319,239,RGB(0,0,0));
+    t:="Pag "+NumStr(pg)+"/"+NumStr(np)+"   Zoom "+NumStr(lv)+"/"+NumStr(ml);
+    TEXTOUT_P(t,G2,4,227,1,RGB(255,255,255));
+    IF msg<>"" THEN
+      TEXTOUT_P(msg,G2,130,227,1,RGB(255,200,80));
+      msg:="";
+    ELSE
+      TEXTOUT_P("+/- zoom  3/9 pag  Esc sair",G2,170,227,1,RGB(180,180,180));
+    END;
+  END;
+
+  BLIT_P(G0,G2);
+END;
+
+EXPORT Visor()
+BEGIN
+  LOCAL k,sair:=0,ox:=0,oy:=0;
+
+  fs:=AFiles();
+  np:=0;
+  WHILE Existe(Tn(np+1,1,1,1)) DO np:=np+1; END;
+  IF np==0 THEN
+    MSGBOX("Nenhuma pagina encontrada. Gere o app com o conversor visor_hp.py.");
+    RETURN 0;
+  END;
+
+  sk:={"","","",""}; sa:={0,0,0,0}; tick:=0; falhou:=0; msg:="";
+  DIMGROB_P(G2,320,240,RGB(70,70,70));
+  pg:=1; lv:=1; cx:=0.5; cy:=0; barra:=1;
+  Carregar();
+  // comeca ajustado a largura da tela, se houver esse nivel
+  IF gw<316 AND ml>1 THEN Zoom(2); END;
+  Desenhar();
+
+  REPEAT
+    k:=WAIT(-1);
+    IF TYPE(k)==6 THEN
+      // evento de toque: {tipo, x, y, ...}
+      IF SIZE(k)>=3 THEN
+        IF k(1)==0 THEN ox:=k(2); oy:=k(3); END;
+        IF k(1)==1 THEN
+          cx:=cx-(k(2)-ox)/gw;
+          cy:=cy-(k(3)-oy)/gh;
+          ox:=k(2); oy:=k(3);
+          barra:=0;
+          Desenhar();
+        END;
+      END;
+    ELSE
+      CASE
+        IF k==2 THEN   // cima
+          IF noTopo AND pg>1 THEN IrPagina(pg-1,0);
+          ELSE cy:=cy-80/gh; barra:=0; END;
+        END;
+        IF k==12 THEN  // baixo
+          IF noFim AND pg<np THEN IrPagina(pg+1,1);
+          ELSE cy:=cy+80/gh; barra:=0; END;
+        END;
+        IF k==7 THEN   // esquerda
+          IF temH THEN cx:=cx-107/gw; barra:=0; ELSE IrPagina(pg-1,1); END;
+        END;
+        IF k==8 THEN   // direita
+          IF temH THEN cx:=cx+107/gw; barra:=0; ELSE IrPagina(pg+1,1); END;
+        END;
+        IF k==50 THEN Zoom(lv+1); END;          // +
+        IF k==45 THEN Zoom(lv-1); END;          // -
+        IF k==44 THEN IrPagina(pg+1,1); END;    // tecla 3
+        IF k==34 THEN IrPagina(pg-1,1); END;    // tecla 9
+        IF k==30 THEN barra:=NOT barra; END;    // Enter
+        IF k==4 THEN sair:=1; END;              // Esc
+      END;
+      IF NOT sair THEN
+        Desenhar();
+        // faltou memoria no meio do desenho: reduz o zoom e tenta de novo
+        IF falhou AND lv>1 THEN
+          falhou:=0; Zoom(lv-1);
+          msg:="Memoria insuficiente p/ este zoom";
+          Desenhar();
+        END;
+      END;
+    END;
+  UNTIL sair;
+  // libera a memoria das imagens
+  FOR k FROM 1 TO 4 DO SlotLivre(k); END;
+  RETURN 0;
+END;
+
+// Roda ao tocar em "Inicio" na biblioteca de apps
+START()
+BEGIN
+  Visor();
+  STARTVIEW(-1,1);
+END;
+
+// Roda ao abrir o app pelo icone (vista Simbolica)
+Symb()
+BEGIN
+  Visor();
+  STARTVIEW(-1,1);
+END;

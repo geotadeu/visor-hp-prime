@@ -1,0 +1,7 @@
+# Saída do conversor: contém os documentos convertidos (podem ser pessoais)
+saida/
+*.hpappdir/
+
+# Python
+__pycache__/
+*.pyc
